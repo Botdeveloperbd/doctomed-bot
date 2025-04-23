@@ -1,0 +1,4 @@
+python-telegram-bot==20.7
+python-dotenv==1.0.1
+# Optional: for SMS reminders
+# twilio==8.11.0
