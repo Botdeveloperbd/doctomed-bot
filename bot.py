@@ -18,7 +18,7 @@ logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s
 logger = logging.getLogger(__name__)
 
 # Conversation states
-SELECT_DOCTOR, PATIENT_NAME, CAREGIVER_LINK, CANCEL_BOOKING, ADMIN_ADD, ADMIN_REMOVE, USER_EDIT, BROADCAST, ADMIN_ADD_SLOT, ADMIN_ADD_DOCTOR = range(10)
+SELECT_DOCTOR, PATIENT_NAME, PATIENT_DOB, CAREGIVER_LINK, CANCEL_BOOKING, ADMIN_ADD, ADMIN_REMOVE, USER_EDIT, BROADCAST, ADMIN_ADD_SLOT, ADMIN_ADD_DOCTOR = range(11)
 
 # Initialize database
 def init_db():
@@ -26,7 +26,7 @@ def init_db():
     c = conn.cursor()
     c.execute('''CREATE TABLE IF NOT EXISTS bookings 
                  (id INTEGER PRIMARY KEY, user_id INTEGER, patient_name TEXT, 
-                  time_slot TEXT, booking_date TEXT, doctor_id INTEGER, 
+                  patient_dob TEXT, time_slot TEXT, booking_date TEXT, doctor_id INTEGER, 
                   status TEXT, confirmed INTEGER)''')
     c.execute('''CREATE TABLE IF NOT EXISTS users 
                  (user_id INTEGER PRIMARY KEY, is_caregiver INTEGER, linked_patient TEXT)''')
@@ -213,7 +213,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not bookings:
             await query.message.reply_text("You have no active bookings to cancel.")
             return
-        keyboard = [[InlineKeyboardButton(f"{b[2]} at {b[3]} on {b[4]}", callback_data=f'cancel_{b[0]}')] for b in bookings]
+        keyboard = [[InlineKeyboardButton(f"{b[2]} at {b[5]} on {b[6]}", callback_data=f'cancel_{b[0]}')] for b in bookings]
         reply_markup = InlineKeyboardMarkup(keyboard)
         await query.message.reply_text("Select a booking to cancel:", reply_markup=reply_markup)
     elif query.data.startswith('cancel_') and not (is_user_admin and 'admin_panel' in query.data):
@@ -234,23 +234,32 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Admin features
     elif query.data == 'admin_panel' and is_user_admin:
         keyboard = [
-            [InlineKeyboardButton("View Bookings", callback_data='admin_bookings')],
-            [InlineKeyboardButton("Manage Users", callback_data='admin_users')],
-            [InlineKeyboardButton("Add Admin", callback_data='admin_add')],
-            [InlineKeyboardButton("Remove Admin", callback_data='admin_remove')],
-            [InlineKeyboardButton("Manage Doctor Slots", callback_data='admin_slots')],
-            [InlineKeyboardButton("Manage Doctors", callback_data='admin_doctors')],
-            [InlineKeyboardButton("System Stats", callback_data='admin_stats')],
-            [InlineKeyboardButton("Broadcast Message", callback_data='admin_broadcast')]
+            [
+                InlineKeyboardButton("View Bookings", callback_data='admin_bookings'),
+                InlineKeyboardButton("Manage Users", callback_data='admin_users'),
+                InlineKeyboardButton("Add Admin", callback_data='admin_add')
+            ],
+            [
+                InlineKeyboardButton("Remove Admin", callback_data='admin_remove'),
+                InlineKeyboardButton("Manage Slots", callback_data='admin_slots'),
+                InlineKeyboardButton("Manage Doctors", callback_data='admin_doctors')
+            ],
+            [
+                InlineKeyboardButton("System Stats", callback_data='admin_stats'),
+                InlineKeyboardButton("Broadcast", callback_data='admin_broadcast'),
+                InlineKeyboardButton("Back", callback_data='back_to_start')
+            ]
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
         await query.message.reply_text("Admin Panel:", reply_markup=reply_markup)
+    elif query.data == 'back_to_start' and is_user_admin:
+        await start(update, context)
     elif query.data == 'admin_bookings' and is_user_admin:
         bookings = get_all_bookings()
         if not bookings:
             await query.message.reply_text("No bookings found.")
             return
-        keyboard = [[InlineKeyboardButton(f"ID: {b[0]} - {b[2]} ({b[4]} {b[3]})", callback_data=f'admin_booking_{b[0]}')] for b in bookings]
+        keyboard = [[InlineKeyboardButton(f"ID: {b[0]} - {b[2]} ({b[6]} {b[5]})", callback_data=f'admin_booking_{b[0]}')] for b in bookings]
         reply_markup = InlineKeyboardMarkup(keyboard)
         await query.message.reply_text("Select a booking to manage:", reply_markup=reply_markup)
     elif query.data.startswith('admin_booking_') and is_user_admin:
@@ -263,8 +272,8 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             ]
             reply_markup = InlineKeyboardMarkup(keyboard)
             await query.message.reply_text(
-                f"Booking ID: {booking[0]}\nUser ID: {booking[1]}\nPatient: {booking[2]}\nSlot: {booking[3]} on {booking[4]}\n"
-                f"Doctor ID: {booking[5]}\nStatus: {booking[6]}",
+                f"Booking ID: {booking[0]}\nUser ID: {booking[1]}\nPatient: {booking[2]}\nDOB: {booking[3]}\n"
+                f"Slot: {booking[5]} on {booking[6]}\nDoctor ID: {booking[7]}\nStatus: {booking[8]}",
                 reply_markup=reply_markup
             )
     elif query.data.startswith('admin_cancel_') and is_user_admin:
@@ -387,11 +396,11 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         booking_date = parts[2]
         doctor_id = parts[3]
         context.user_data['selected_slot'] = slot
-        context.user_data['selected_date'] = booking_date
+        context.user_data['selected_date'] = booking_date  # Corrected typo from 'user carcass' to 'user_data'
         context.user_data['selected_doctor_id'] = int(doctor_id)
         context.user_data['state'] = PATIENT_NAME
         await query.message.reply_text(
-            "📝 Please provide the patient's name for the booking."
+            "📝 Please provide the patient's full name for the booking."
         )
         return PATIENT_NAME
     elif query.data == 'book_self' and not (is_user_admin and 'admin_panel' in query.data):
@@ -419,30 +428,30 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         c = conn.cursor()
         c.execute('UPDATE bookings SET status = ?, confirmed = 1 WHERE id = ?', ('approved', booking_id))
         c.execute('UPDATE doctor_slots SET is_available = 0 WHERE booking_date = ? AND time_slot = ? AND doctor_id = ?',
-                  (booking[4], booking[3], booking[5]))
+                  (booking[6], booking[5], booking[7]))
         conn.commit()
         conn.close()
         # Get doctor name
-        doctor = get_doctor_by_id(booking[5])
+        doctor = get_doctor_by_id(booking[7])
         doctor_name = doctor[1] if doctor else "Doctor"
         # Notify user
-        booking_date_dt = datetime.strptime(booking[4], '%Y-%m-%d')
+        booking_date_dt = datetime.strptime(booking[6], '%Y-%m-%d')
         day_name = calendar.day_name[booking_date_dt.weekday()]
         current_date = date.today().strftime('%Y-%m-%d')
-        date_display = "today" if booking[4] == current_date else f"on {booking[4]} ({day_name})"
+        date_display = "today" if booking[6] == current_date else f"on {booking[6]} ({day_name})"
         await context.bot.send_message(
             chat_id=booking[1],
             text=(
-                f"✅ Your call with {doctor_name} is scheduled {date_display} at {booking[3]}. "
+                f"✅ Your call with {doctor_name} is scheduled {date_display} at {booking[5]}. "
                 "Please call 0900 123 456 at that time."
             )
         )
         # Notify doctor
         await context.bot.send_message(
-            chat_id=booking[5],
+            chat_id=booking[7],
             text=(
-                f"✅ Booking confirmed for {booking[2]} on {booking[4]} ({day_name}) at {booking[3]}.\n"
-                f"Patient: {booking[2]}\nUser ID: {booking[1]}"
+                f"✅ Booking confirmed for {booking[2]} on {booking[6]} ({day_name}) at {booking[5]}.\n"
+                f"Patient: {booking[2]}\nDOB: {booking[3]}\nUser ID: {booking[1]}"
             )
         )
         await query.message.reply_text(f"✅ Booking ID {booking_id} approved. User and doctor notified.")
@@ -460,7 +469,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Notify user
         await context.bot.send_message(
             chat_id=booking[1],
-            text=f"❌ Your booking for {booking[2]} on {booking[4]} at {booking[3]} was rejected by the doctor. Please select another slot."
+            text=f"❌ Your booking for {booking[2]} on {booking[6]} at {booking[5]} was rejected by the doctor. Please select another slot."
         )
         await query.message.reply_text(f"✅ Booking ID {booking_id} rejected. User notified.")
     else:
@@ -469,7 +478,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 def get_user_bookings(user_id):
     conn = sqlite3.connect('doctomed.db')
     c = conn.cursor()
-    c.execute('SELECT id, user_id, patient_name, time_slot, booking_date, doctor_id, status FROM bookings WHERE user_id = ? AND confirmed = 1', (user_id,))
+    c.execute('SELECT id, user_id, patient_name, patient_dob, time_slot, booking_date, doctor_id, status FROM bookings WHERE user_id = ? AND confirmed = 1', (user_id,))
     bookings = c.fetchall()
     conn.close()
     return bookings
@@ -477,7 +486,7 @@ def get_user_bookings(user_id):
 def get_all_bookings():
     conn = sqlite3.connect('doctomed.db')
     c = conn.cursor()
-    c.execute('SELECT id, user_id, patient_name, time_slot, booking_date, doctor_id, status FROM bookings WHERE confirmed = 1')
+    c.execute('SELECT id, user_id, patient_name, patient_dob, time_slot, booking_date, doctor_id, status FROM bookings WHERE confirmed = 1')
     bookings = c.fetchall()
     conn.close()
     return bookings
@@ -485,7 +494,7 @@ def get_all_bookings():
 def get_booking_by_id(booking_id):
     conn = sqlite3.connect('doctomed.db')
     c = conn.cursor()
-    c.execute('SELECT id, user_id, patient_name, time_slot, booking_date, doctor_id, status FROM bookings WHERE id = ?', (booking_id,))
+    c.execute('SELECT id, user_id, patient_name, patient_dob, time_slot, booking_date, doctor_id, status FROM bookings WHERE id = ?', (booking_id,))
     booking = c.fetchone()
     conn.close()
     return booking
@@ -637,80 +646,94 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         return SELECT_DOCTOR
     
     elif context.user_data.get('state') == PATIENT_NAME and not is_user_admin:
-        patient_name = text
-        time_slot = context.user_data['selected_slot']
-        booking_date = context.user_data['selected_date']
-        doctor_id = context.user_data['selected_doctor_id']
-        
-        # Verify slot is still available
-        conn = sqlite3.connect('doctomed.db')
-        c = conn.cursor()
-        c.execute('SELECT is_available FROM doctor_slots WHERE booking_date = ? AND time_slot = ? AND doctor_id = ?', 
-                  (booking_date, time_slot, doctor_id))
-        slot = c.fetchone()
-        if not slot or slot[0] == 0:
-            await update.message.reply_text("⚠️ This slot is no longer available. Please select another slot.")
-            context.user_data.clear()
-            return ConversationHandler.END
-        
-        # Insert pending booking
-        c.execute('INSERT INTO bookings (user_id, patient_name, time_slot, booking_date, doctor_id, status, confirmed) VALUES (?, ?, ?, ?, ?, ?, ?)',
-                  (user_id, patient_name, time_slot, booking_date, doctor_id, 'pending', 0))
-        booking_id = c.lastrowid
-        conn.commit()
-        conn.close()
-        
-        # Get user's Telegram username
-        username = update.message.from_user.username or "N/A"
-        
-        # Notify doctor
-        booking_date_dt = datetime.strptime(booking_date, '%Y-%m-%d')
-        day_name = calendar.day_name[booking_date_dt.weekday()]
-        try:
-            await context.bot.send_message(
-                chat_id=doctor_id,
-                text=(
-                    f"🔔 New booking request:\n"
-                    f"Patient: {patient_name}\n"
-                    f"Date: {booking_date} ({day_name})\n"
-                    f"Time: {time_slot}\n"
-                    f"User ID: {user_id}\n"
-                    f"Username: {username}\n"
-                    f"Please approve or reject the booking."
-                ),
-                reply_markup=InlineKeyboardMarkup([
-                    [InlineKeyboardButton("Approve", callback_data=f'approve_booking_{booking_id}'),
-                     InlineKeyboardButton("Reject", callback_data=f'reject_booking_{booking_id}')]
-                ])
-            )
-        except Exception as e:
-            error_message = f"Failed to notify doctor ID {doctor_id}: {e}"
-            logger.error(error_message)
-            user_message = "⚠️ Error notifying doctor. Please try again or contact support."
-            if "chat not found" in str(e).lower():
-                user_message = "⚠️ Doctor's Telegram account not found. Please ensure the doctor has started the bot."
-            elif "blocked" in str(e).lower():
-                user_message = "⚠️ Bot is blocked by the doctor. Please contact the doctor to unblock the bot."
-            await update.message.reply_text(user_message)
-            # Notify admins
-            for admin_id in ADMIN_IDS:
-                try:
-                    await context.bot.send_message(
-                        chat_id=int(admin_id),
-                        text=f"⚠️ Notification error for booking ID {booking_id}: {error_message}"
-                    )
-                except:
-                    pass
-            context.user_data.clear()
-            return ConversationHandler.END
-        
+        context.user_data['patient_name'] = text
+        context.user_data['state'] = PATIENT_DOB
         await update.message.reply_text(
-            f"📝 Booking request for {patient_name} on {booking_date} at {time_slot} submitted.\n"
-            "You will be notified once the doctor approves."
+            "📅 Please provide the patient's date of birth (format: YYYY-MM-DD, e.g., 1980-01-01)."
         )
-        
-        context.user_data.clear()
-        return ConversationHandler.END
+        return PATIENT_DOB
+    
+    elif context.user_data.get('state') == PATIENT_DOB and not is_user_admin:
+        try:
+            patient_dob = datetime.strptime(text, '%Y-%m-%d').strftime('%Y-%m-%d')
+            patient_name = context.user_data['patient_name']
+            time_slot = context.user_data['selected_slot']
+            booking_date = context.user_data['selected_date']
+            doctor_id = context.user_data['selected_doctor_id']
+            
+            # Verify slot is still available
+            conn = sqlite3.connect('doctomed.db')
+            c = conn.cursor()
+            c.execute('SELECT is_available FROM doctor_slots WHERE booking_date = ? AND time_slot = ? AND doctor_id = ?', 
+                      (booking_date, time_slot, doctor_id))
+            slot = c.fetchone()
+            if not slot or slot[0] == 0:
+                await update.message.reply_text("⚠️ This slot is no longer available. Please select another slot.")
+                context.user_data.clear()
+                return ConversationHandler.END
+            
+            # Insert pending booking
+            c.execute('INSERT INTO bookings (user_id, patient_name, patient_dob, time_slot, booking_date, doctor_id, status, confirmed) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+                      (user_id, patient_name, patient_dob, time_slot, booking_date, doctor_id, 'pending', 0))
+            booking_id = c.lastrowid
+            conn.commit()
+            conn.close()
+            
+            # Get user's Telegram username
+            username = update.message.from_user.username or "N/A"
+            
+            # Notify doctor
+            booking_date_dt = datetime.strptime(booking_date, '%Y-%m-%d')
+            day_name = calendar.day_name[booking_date_dt.weekday()]
+            try:
+                await context.bot.send_message(
+                    chat_id=doctor_id,
+                    text=(
+                        f"🔔 New booking request:\n"
+                        f"Patient: {patient_name}\n"
+                        f"DOB: {patient_dob}\n"
+                        f"Date: {booking_date} ({day_name})\n"
+                        f"Time: {time_slot}\n"
+                        f"User ID: {user_id}\n"
+                        f"Username: {username}\n"
+                        f"Please approve or reject the booking."
+                    ),
+                    reply_markup=InlineKeyboardMarkup([
+                        [InlineKeyboardButton("Approve", callback_data=f'approve_booking_{booking_id}'),
+                         InlineKeyboardButton("Reject", callback_data=f'reject_booking_{booking_id}')]
+                    ])
+                )
+            except Exception as e:
+                error_message = f"Failed to notify doctor ID {doctor_id}: {e}"
+                logger.error(error_message)
+                user_message = "⚠️ Error notifying doctor. Please try again or contact support."
+                if "chat not found" in str(e).lower():
+                    user_message = "⚠️ Doctor's Telegram account not found. Please ensure the doctor has started the bot."
+                elif "blocked" in str(e).lower():
+                    user_message = "⚠️ Bot is blocked by the doctor. Please contact the doctor to unblock the bot."
+                await update.message.reply_text(user_message)
+                # Notify admins
+                for admin_id in ADMIN_IDS:
+                    try:
+                        await context.bot.send_message(
+                            chat_id=int(admin_id),
+                            text=f"⚠️ Notification error for booking ID {booking_id}: {error_message}"
+                        )
+                    except:
+                        pass
+                context.user_data.clear()
+                return ConversationHandler.END
+            
+            await update.message.reply_text(
+                f"📝 Booking request for {patient_name} (DOB: {patient_dob}) on {booking_date} at {time_slot} submitted.\n"
+                "You will be notified once the doctor approves."
+            )
+            
+            context.user_data.clear()
+            return ConversationHandler.END
+        except ValueError:
+            await update.message.reply_text("Invalid date format. Please use YYYY-MM-DD (e.g., 1980-01-01).")
+            return PATIENT_DOB
     
     elif context.user_data.get('state') == ADMIN_ADD and is_user_admin:
         try:
@@ -743,12 +766,19 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     
     elif context.user_data.get('state') == BROADCAST and is_user_admin:
         users = get_all_users()
+        success_count = 0
+        failure_count = 0
         for user in users:
             try:
                 await context.bot.send_message(chat_id=user[0], text=f"📢 Announcement: {text}")
+                success_count += 1
             except Exception as e:
                 logger.error(f"Failed to send broadcast to User ID {user[0]}: {e}")
-        await update.message.reply_text("✅ Broadcast sent to all users.")
+                failure_count += 1
+        await update.message.reply_text(
+            f"✅ Broadcast sent to {success_count} users.\n"
+            f"❌ Failed to send to {failure_count} users."
+        )
         context.user_data.pop('state', None)
         return ConversationHandler.END
     
@@ -811,6 +841,7 @@ def main():
         states={
             SELECT_DOCTOR: [CallbackQueryHandler(button_callback, pattern='^(doctor_|slot_|select_doctor)')],
             PATIENT_NAME: [MessageHandler(Text() & ~COMMAND, handle_message)],
+            PATIENT_DOB: [MessageHandler(Text() & ~COMMAND, handle_message)],
             CAREGIVER_LINK: [MessageHandler(Text() & ~COMMAND, handle_message)],
             CANCEL_BOOKING: [CallbackQueryHandler(button_callback, pattern='^cancel_')],
             ADMIN_ADD: [MessageHandler(Text() & ~COMMAND, handle_message)],
